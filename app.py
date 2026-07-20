@@ -185,7 +185,6 @@ def system_root_frontend():
                         <button onclick="triggerQuery('/aggregates/accidents?ags=13', '5. Mecklenburg-Vorpommern Boundary')" class="mt-5 w-full bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white py-2 rounded-lg text-xs font-bold transition">Execute Query</button>
                     </div>
 
-                    <!-- NEW DYNAMIC CAPITA CROSS ROUTE MATRIX BUTTON -->
                     <div class="bg-panelGlass/20 border border-slate-800/80 p-5 rounded-xl flex flex-col justify-between hover:border-slate-700 transition group border-neonCyan/40">
                         <div>
                             <span class="text-[10px] font-mono text-neonCyan uppercase tracking-wider block mb-2">Mandatory 5+2 Cross Target</span>
@@ -262,9 +261,13 @@ def get_accident_rate_per_capita(ags: str = Query(..., description="Target 5 or 
     cursor.execute("SELECT COUNT(*) as total_accidents FROM accidents WHERE year = %s AND ags LIKE %s;", (year, f"{ags}%"))
     acc_data = cursor.fetchone()
     
-    cursor.execute("SELECT license_type FROM provenance WHERE dataset_name LIKE '%GENESIS%' LIMIT 1;")
-    prov = cursor.fetchone()
-    prov_str = prov['license_type'] if prov else "Data license Germany – attribution – version 2.0"
+    # Safe Fallback to protect against crash if tables are empty
+    try:
+        cursor.execute("SELECT license_type FROM provenance WHERE dataset_name LIKE '%GENESIS%' LIMIT 1;")
+        prov = cursor.fetchone()
+        prov_str = prov['license_type'] if (prov and prov.get('license_type')) else "Data license Germany – attribution – version 2.0"
+    except Exception:
+        prov_str = "Data license Germany – attribution – version 2.0"
     
     cursor.close()
     conn.close()
@@ -314,9 +317,13 @@ def retrieve_accident_metrics(ags: Optional[str] = Query(None), year: Optional[i
     cursor.execute(statement, tuple(arguments))
     dataset = cursor.fetchone()
     
-    cursor.execute("SELECT license_type FROM provenance WHERE dataset_name LIKE '%Accident%' LIMIT 1;")
-    prov = cursor.fetchone()
-    prov_str = prov['license_type'] if prov else "Data license Germany – attribution – version 2.0"
+    # Safe Ingestion Fallback
+    try:
+        cursor.execute("SELECT license_type FROM provenance WHERE dataset_name LIKE '%Accident%' LIMIT 1;")
+        prov = cursor.fetchone()
+        prov_str = prov['license_type'] if (prov and prov.get('license_type')) else "Data license Germany – attribution – version 2.0"
+    except Exception:
+        prov_str = "Data license Germany – attribution – version 2.0"
     
     cursor.close()
     conn.close()
@@ -368,7 +375,7 @@ def get_top_fatal_districts_2024():
     for i, row in enumerate(rows):
         result.append({
             "rank": i + 1,
-            "district_code": row["district_code"] if "district_code" in row else row.get("dist_code"),
+            "district_code": row.get("dist_code") or row.get("district_code") or "Unknown",
             "fatal_accidents_2024": row["fatal_count"]
         })
     return result
