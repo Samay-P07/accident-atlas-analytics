@@ -8,8 +8,8 @@ import os
 
 app = FastAPI(
     title="Data Management Project Framework",
-    description="Dynamic Open Data Harmonization Engine - Technical University of Chemnitz",
-    version="2.0"
+    description="Heterogeneous Source Processing Environment - Technical University of Chemnitz",
+    version="1.7"
 )
 
 DB_CONFIG = {
@@ -26,20 +26,10 @@ def resolve_backend_stream():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database connectivity runtime failure: {e}")
 
-class AccidentRateResponse(BaseModel):
-    region_name: str
-    ags: str
-    year: int
-    accident_count: int
-    population: int
-    rate_per_100k_inhabitants: float
-    provenance: str
-
 class RegionResponse(BaseModel):
     ags: str
     name: str
     level: str
-    population: int
 
 class AccidentMetricsResponse(BaseModel):
     scope: Dict[str, Any]
@@ -62,7 +52,6 @@ class FatalDistrictsResponse(BaseModel):
     district_code: str
     fatal_accidents_2024: int
 
-# ---- HOME ROUTE WITH THE FULL FRONTEND DASHBOARD ----
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def system_root_frontend():
     html_content = """
@@ -185,14 +174,6 @@ def system_root_frontend():
                         <button onclick="triggerQuery('/aggregates/accidents?ags=13', '5. Mecklenburg-Vorpommern Boundary')" class="mt-5 w-full bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-white py-2 rounded-lg text-xs font-bold transition">Execute Query</button>
                     </div>
 
-                    <div class="bg-panelGlass/20 border border-slate-800/80 p-5 rounded-xl flex flex-col justify-between hover:border-slate-700 transition group border-neonCyan/40">
-                        <div>
-                            <span class="text-[10px] font-mono text-neonCyan uppercase tracking-wider block mb-2">Mandatory 5+2 Cross Target</span>
-                            <h3 class="text-sm font-bold text-slate-200 group-hover:text-white transition">Dynamic accident rate normalized per 100,000 inhabitants (Saxony 2023)?</h3>
-                        </div>
-                        <button onclick="triggerQuery('/aggregates/accident-rate-per-100k?ags=14&year=2023', 'Cross-Dataset: Saxony Rate per 100k')" class="mt-5 w-full bg-sky-900 hover:bg-sky-800 border border-sky-600 text-white py-2 rounded-lg text-xs font-bold transition">Execute Multi-Dataset Query</button>
-                    </div>
-
                     <div class="bg-panelGlass/20 border border-slate-800/80 p-5 rounded-xl flex flex-col justify-between hover:border-slate-700 transition group">
                         <div>
                             <span class="text-[10px] font-mono text-neonEmerald uppercase tracking-wider block mb-2">Bonus Scenario A</span>
@@ -239,105 +220,6 @@ def system_root_frontend():
     """
     return HTMLResponse(content=html_content, status_code=200)
 
-# ---- NEW MULTI-DATASET NORMALIZATION ENDPOINT ----
-@app.get("/aggregates/accident-rate-per-100k", response_model=AccidentRateResponse, tags=["Mandatory Multi-Dataset Scenarios"])
-def get_accident_rate_per_capita(ags: str = Query(..., description="Target 5 or 8-digit AGS code"), year: int = Query(..., description="Target calendar year")):
-    conn = resolve_backend_stream()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT name, population FROM regions WHERE ags LIKE %s LIMIT 1;", (f"{ags}%",))
-    region = cursor.fetchone()
-    
-    if not region:
-        cursor.close()
-        conn.close()
-        raise HTTPException(status_code=404, detail=f"Target regional key indicator code '{ags}' not registered in engine infrastructure.")
-        
-    if not region['population'] or region['population'] == 0:
-        cursor.close()
-        conn.close()
-        raise HTTPException(status_code=400, detail=f"Regional matrix exists but baseline population metrics are zero or uninitialized.")
-
-    cursor.execute("SELECT COUNT(*) as total_accidents FROM accidents WHERE year = %s AND ags LIKE %s;", (year, f"{ags}%"))
-    acc_data = cursor.fetchone()
-    
-    # Safe Fallback to protect against crash if tables are empty
-    try:
-        cursor.execute("SELECT license_type FROM provenance WHERE dataset_name LIKE '%GENESIS%' LIMIT 1;")
-        prov = cursor.fetchone()
-        prov_str = prov['license_type'] if (prov and prov.get('license_type')) else "Data license Germany – attribution – version 2.0"
-    except Exception:
-        prov_str = "Data license Germany – attribution – version 2.0"
-    
-    cursor.close()
-    conn.close()
-    
-    total_acc = acc_data['total_accidents'] if acc_data else 0
-    pop = region['population']
-    calculated_rate = round((total_acc / pop) * 100000, 2)
-    
-    return {
-        "region_name": region['name'],
-        "ags": ags,
-        "year": year,
-        "accident_count": total_acc,
-        "population": pop,
-        "rate_per_100k_inhabitants": calculated_rate,
-        "provenance": prov_str
-    }
-
-# ---- CORE COMPLIANCE AND METADATA ROUTES WITH EXTENDED ERROR HANDLING ----
-@app.get("/aggregates/accidents", response_model=AccidentMetricsResponse, tags=["Core Examiner Scenarios"])
-def retrieve_accident_metrics(ags: Optional[str] = Query(None), year: Optional[int] = Query(None), pedestrian_only: bool = Query(False)):
-    conn = resolve_backend_stream()
-    cursor = conn.cursor()
-    
-    if ags and len(ags) not in [2, 3, 5, 8]:
-        raise HTTPException(status_code=400, detail="Invalid AGS format parameter length. Must represent State (2), District (5) or Municipality (8).")
-
-    detected_start_year = None
-    if ags and not year:
-        cursor.execute("SELECT MIN(year) as start_yr FROM accidents WHERE ags LIKE %s;", (f"{ags}%",))
-        db_res = cursor.fetchone()
-        if db_res and db_res.get('start_yr') is not None:
-            detected_start_year = db_res['start_yr']
-
-    statement = "SELECT COUNT(*) as incident_metrics FROM accidents WHERE 1=1"
-    arguments = []
-    
-    if year:
-        statement += " AND year = %s"
-        arguments.append(year)
-    if ags:
-        statement += " AND ags LIKE %s"
-        arguments.append(f"{ags}%")
-    if pedestrian_only:
-        statement += " AND ist_fuss = 1"
-        
-    cursor.execute(statement, tuple(arguments))
-    dataset = cursor.fetchone()
-    
-    # Safe Ingestion Fallback
-    try:
-        cursor.execute("SELECT license_type FROM provenance WHERE dataset_name LIKE '%Accident%' LIMIT 1;")
-        prov = cursor.fetchone()
-        prov_str = prov['license_type'] if (prov and prov.get('license_type')) else "Data license Germany – attribution – version 2.0"
-    except Exception:
-        prov_str = "Data license Germany – attribution – version 2.0"
-    
-    cursor.close()
-    conn.close()
-    
-    response_payload = {
-        "scope": {"prefix": ags if ags else "Federal Border Structure", "target_period": year if year else "All Ingested Logs"},
-        "count": dataset["incident_metrics"] if dataset else 0,
-        "provenance": prov_str
-    }
-    if detected_start_year:
-        response_payload["data_available_from_year_onwards"] = detected_start_year
-        
-    return response_payload
-
 @app.get("/custom/dresden-bicycle-2024", response_model=BicycleAccidentResponse, tags=["Grader Bonus Queries"])
 def get_dresden_bicycle_accidents():
     conn = resolve_backend_stream()
@@ -379,6 +261,73 @@ def get_top_fatal_districts_2024():
             "fatal_accidents_2024": row["fatal_count"]
         })
     return result
+
+@app.get("/regions", response_model=List[RegionResponse], tags=["Metadata Infrastructure"])
+def extract_regional_layer(level: Optional[str] = Query(None)):
+    conn = resolve_backend_stream()
+    cursor = conn.cursor()
+    if level:
+        cursor.execute("SELECT ags, name, level FROM regions WHERE level = %s;", (level,))
+    else:
+        cursor.execute("SELECT ags, name, level FROM regions;")
+    payload = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return payload
+
+@app.get("/aggregates/accidents", response_model=AccidentMetricsResponse, tags=["Core Examiner Scenarios"])
+def retrieve_accident_metrics(
+    ags: Optional[str] = Query(None), 
+    year: Optional[int] = Query(None), 
+    pedestrian_only: bool = Query(False)
+):
+    conn = resolve_backend_stream()
+    cursor = conn.cursor()
+    
+    if ags and len(ags) not in [2, 3, 5, 8]:
+        raise HTTPException(status_code=400, detail="Invalid AGS format parameter length.")
+
+    detected_start_year = None
+    if ags and not year:
+        cursor.execute("SELECT MIN(year) as start_yr FROM accidents WHERE ags LIKE %s;", (f"{ags}%",))
+        db_res = cursor.fetchone()
+        if db_res and db_res.get('start_yr') is not None:
+            detected_start_year = db_res['start_yr']
+
+    statement = "SELECT COUNT(*) as incident_metrics FROM accidents WHERE 1=1"
+    arguments = []
+    
+    if year:
+        statement += " AND year = %s"
+        arguments.append(year)
+    if ags:
+        statement += " AND ags LIKE %s"
+        arguments.append(f"{ags}%")
+    if pedestrian_only:
+        statement += " AND ist_fuss = 1"
+        
+    cursor.execute(statement, tuple(arguments))
+    dataset = cursor.fetchone()
+    
+    try:
+        cursor.execute("SELECT license_type FROM provenance WHERE dataset_name LIKE '%Accident%' LIMIT 1;")
+        prov = cursor.fetchone()
+        prov_str = prov['license_type'] if (prov and prov.get('license_type')) else "Data license Germany – attribution – version 2.0"
+    except Exception:
+        prov_str = "Data license Germany – attribution – version 2.0"
+    
+    cursor.close()
+    conn.close()
+    
+    response_payload = {
+        "scope": {"prefix": ags if ags else "Federal Border Structure", "target_period": year if year else "All Ingested Logs"},
+        "count": dataset["incident_metrics"] if dataset else 0,
+        "provenance": prov_str
+    }
+    if detected_start_year:
+        response_payload["data_available_from_year_onwards"] = detected_start_year
+        
+    return response_payload
 
 @app.get("/metadata/earliest-year", response_model=EarliestYearResponse, tags=["Metadata Infrastructure"])
 def fetch_system_bounds():
