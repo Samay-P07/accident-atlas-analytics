@@ -124,7 +124,7 @@ def system_root_frontend():
                     <h1 class="text-xl font-extrabold text-white tracking-tight mt-1">Open Data Integration for Traffic Safety</h1>
                 </div>
                 <div class="text-left sm:text-right text-xs text-slate-400 font-mono border-l-2 sm:border-l-0 sm:border-r-2 border-slate-700 pl-3 sm:pl-0 sm:pr-3">
-                    <div>Student: <span class="text-slate-200 font-semibold">Samay Patel</span> (916936)</div>
+                    <div>Student: <span class="text-slate-200 font-semibold">Samay Patel</span></div>
                     <div>Course: <span class="text-slate-300">Datenbanken und Web-Techniken</span></div>
                     <div>University: <span class="text-slate-300">TU Chemnitz</span></div>
                 </div>
